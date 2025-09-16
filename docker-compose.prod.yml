@@ -12,29 +12,24 @@ services:
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      - --certificatesresolvers.cloudflare.acme.dnschallenge=true
-      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
-      - --certificatesresolvers.cloudflare.acme.email=admin@kodexis.cloud
-      - --certificatesresolvers.cloudflare.acme.storage=/acme.json
+      # Configuração do ACME com HTTP Challenge (padrão)
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${LETSENCRYPT_EMAIL} # Definido no .env
+      - --certificatesresolvers.letsencrypt.acme.storage=/acme.json
       - --api.dashboard=true
-      - --api.insecure=false # Força autenticação via middleware
+      - --api.insecure=false
     ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
+      - "80:80"     # Obrigatório para HTTP Challenge
+      - "443:443"   # HTTPS
+      - "8080:8080" # Dashboard (opcional)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./acme.json:/acme.json
-    environment:
-      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
-      # Se usar email + key, descomente abaixo e remova a linha acima:
-      # - CF_API_EMAIL=${CF_API_EMAIL}
-      # - CF_API_KEY=${CF_API_KEY}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.rule=Host(`traefik.kodexis.cloud`)"
-      - "traefik.http.routers.traefik.tls.certresolver=cloudflare"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"  
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.middlewares=auth"
       - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$sua_senha_hash$$" # Substitua!
@@ -65,7 +60,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.rule=Host(`n8n.kodexis.cloud`)"
-      - "traefik.http.routers.n8n.tls.certresolver=cloudflare"
+      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
 
   n8n-worker-1:
@@ -128,7 +123,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.evolution-api.entrypoints=websecure"
       - "traefik.http.routers.evolution-api.rule=Host(`whatsapp.kodexis.cloud`)"
-      - "traefik.http.routers.evolution-api.tls.certresolver=cloudflare"
+      - "traefik.http.routers.evolution-api.tls.certresolver=letsencrypt"  
       - "traefik.http.services.evolution-api.loadbalancer.server.port=8080"
 
 volumes:
