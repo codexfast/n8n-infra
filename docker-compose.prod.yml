@@ -1,0 +1,137 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --certificatesresolvers.cloudflare.acme.dnschallenge=true
+      - --certificatesresolvers.cloudflare.acme.dnschallenge.provider=cloudflare
+      - --certificatesresolvers.cloudflare.acme.email=admin@kodexis.cloud
+      - --certificatesresolvers.cloudflare.acme.storage=/acme.json
+      - --api.dashboard=true
+      - --api.insecure=false # Força autenticação via middleware
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./acme.json:/acme.json
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      # Se usar email + key, descomente abaixo e remova a linha acima:
+      # - CF_API_EMAIL=${CF_API_EMAIL}
+      # - CF_API_KEY=${CF_API_KEY}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.kodexis.cloud`)"
+      - "traefik.http.routers.traefik.tls.certresolver=cloudflare"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$sua_senha_hash$$" # Substitua!
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - QUEUE_BULL_REDIS_HOST=redis-server
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=0
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_PASSWORD=
+      - QUEUE_BULL_REDIS_USERNAME=
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - redis
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.rule=Host(`n8n.kodexis.cloud`)"
+      - "traefik.http.routers.n8n.tls.certresolver=cloudflare"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+  n8n-worker-1:
+    image: n8nio/n8n
+    env_file:
+      - .env
+    environment:
+      - QUEUE_BULL_REDIS_HOST=redis-server
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_BULL_REDIS_DB=0
+      - OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_PASSWORD=
+      - QUEUE_BULL_REDIS_USERNAME=
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    command: worker
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - n8n
+
+  redis:
+    image: redis:alpine
+    container_name: redis-server
+    restart: always
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: postgres_pgvector
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  evolution-api:
+    container_name: evolution_api
+    image: atendai/evolution-api:homolog
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis-server:6379/1
+      - CACHE_REDIS_PREFIX_KEY=evolution
+      - CACHE_REDIS_SAVE_INSTANCES=false
+      - CACHE_LOCAL_ENABLED=false
+    volumes:
+      - evolution_instances:/evolution/instances
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.evolution-api.entrypoints=websecure"
+      - "traefik.http.routers.evolution-api.rule=Host(`whatsapp.kodexis.cloud`)"
+      - "traefik.http.routers.evolution-api.tls.certresolver=cloudflare"
+      - "traefik.http.services.evolution-api.loadbalancer.server.port=8080"
+
+volumes:
+  n8n_data:
+  redis_data:
+  evolution_instances:
